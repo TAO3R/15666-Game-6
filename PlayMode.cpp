@@ -9,51 +9,64 @@
 #include "data_path.hpp"
 
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/color_space.hpp>
 
 #include <random>
 
-GLuint hexapod_meshes_for_lit_color_texture_program = 0;
-Load< MeshBuffer > hexapod_meshes(LoadTagDefault, []() -> MeshBuffer const * {
-	MeshBuffer const *ret = new MeshBuffer(data_path("hexapod.pnct"));
-	hexapod_meshes_for_lit_color_texture_program = ret->make_vao_for_program(lit_color_texture_program->program);
+// colors are written as the sRGB hex you see on screen, the framebuffer does the sRGB encoding
+static glm::vec3 srgb(uint32_t hex)
+{
+	return glm::convertSRGBToLinear(glm::vec3((hex >> 16) & 0xff, (hex >> 8) & 0xff, hex & 0xff) / 255.0f);
+}
+
+GLuint cube_sphere_vao = 0;
+Load< MeshBuffer > cube_sphere_meshes(LoadTagDefault, []() -> MeshBuffer const * {
+	MeshBuffer const *ret = new MeshBuffer(data_path("cube_sphere.pnct"));
+	cube_sphere_vao = ret->make_vao_for_program(lit_color_texture_program->program);
 	return ret;
 });
 
-Load< Scene > hexapod_scene(LoadTagDefault, []() -> Scene const * {
-	return new Scene(data_path("hexapod.scene"), [&](Scene &scene, Scene::Transform *transform, std::string const &mesh_name){
-		Mesh const &mesh = hexapod_meshes->lookup(mesh_name);
+PlayMode::PlayMode() : scene() {
 
-		scene.drawables.emplace_back(transform);
-		Scene::Drawable &drawable = scene.drawables.back();
-
-		drawable.pipeline = lit_color_texture_program_pipeline;
-
-		drawable.pipeline.vao = hexapod_meshes_for_lit_color_texture_program;
-		drawable.pipeline.type = mesh.type;
-		drawable.pipeline.start = mesh.start;
-		drawable.pipeline.count = mesh.count;
-
-	});
-});
-
-PlayMode::PlayMode() : scene(*hexapod_scene) {
-	//get pointers to leg for convenience:
-	for (auto &transform : scene.transforms) {
-		if (transform.name == "Hip.FL") hip = &transform;
-		else if (transform.name == "UpperLeg.FL") upper_leg = &transform;
-		else if (transform.name == "LowerLeg.FL") lower_leg = &transform;
+	{	// clean up
+		scene.drawables.clear();
+		scene.transforms.clear();
 	}
-	if (hip == nullptr) throw std::runtime_error("Hip not found.");
-	if (upper_leg == nullptr) throw std::runtime_error("Upper leg not found.");
-	if (lower_leg == nullptr) throw std::runtime_error("Lower leg not found.");
 
-	hip_base_rotation = hip->rotation;
-	upper_leg_base_rotation = upper_leg->rotation;
-	lower_leg_base_rotation = lower_leg->rotation;
+	{	// camera set up
+		static constexpr float camera_height = 15.0f;
+		camera_transform.name = "Camera";
+		float pitch = glm::radians(0.0f);
+		camera_transform.position = glm::vec3(0.0f, 0.0f, camera_height);
+		camera_transform.rotation = glm::angleAxis(pitch, glm::vec3(1.0f, 0.0f, 0.0f));
+	}
+	
+	{	// create the level with cubes
+		Mesh const &cube_mesh = cube_sphere_meshes->lookup("Cube");
+		// Mesh const &sphere_mesh = cube_sphere_meshes->lookup("Sphere");
 
-	//get pointer to camera for convenience:
-	if (scene.cameras.size() != 1) throw std::runtime_error("Expecting scene to have exactly one camera, but it has " + std::to_string(scene.cameras.size()));
-	camera = &scene.cameras.front();
+		// add a transform
+		scene.transforms.emplace_back();
+		Scene::Transform *transform = &scene.transforms.back();
+		transform->name = "cube";
+		transform->position = glm::vec3(0.0f, 0.0f, 0.0f);
+		transform->rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);	// identity (wxyz)
+		transform->scale = glm::vec3(1.0f);
+
+		// add a drawable
+		scene.drawables.emplace_back(transform);
+		Scene::Drawable *drawable = &scene.drawables.back();
+		drawable->pipeline = lit_color_texture_program_pipeline;
+		drawable->pipeline.vao = cube_sphere_vao;
+		drawable->pipeline.type = cube_mesh.type;
+		drawable->pipeline.start = cube_mesh.start;
+		drawable->pipeline.count = cube_mesh.count;
+		glm::vec3 color = srgb(0xff0000);
+		drawable->pipeline.set_uniforms = [color]()
+		{
+			glUniform3fv(lit_color_texture_program->COLOR_vec3, 1, glm::value_ptr(color));
+		};
+	}
 }
 
 PlayMode::~PlayMode() {
@@ -81,19 +94,31 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 			down.downs += 1;
 			down.pressed = true;
 			return true;
+		} else if (evt.key.key == SDLK_SPACE) {
+			space.downs += 1;
+			space.pressed = true;
+			return true;
 		}
 	} else if (evt.type == SDL_EVENT_KEY_UP) {
 		if (evt.key.key == SDLK_A) {
+			left.ups += 1;
 			left.pressed = false;
 			return true;
 		} else if (evt.key.key == SDLK_D) {
+			right.ups += 1;
 			right.pressed = false;
 			return true;
 		} else if (evt.key.key == SDLK_W) {
+			up.ups += 1;
 			up.pressed = false;
 			return true;
 		} else if (evt.key.key == SDLK_S) {
+			down.ups += 1;
 			down.pressed = false;
+			return true;
+		} else if (evt.key.key == SDLK_SPACE) {
+			space.ups += 1;
+			space.pressed = false;
 			return true;
 		}
 	} else if (evt.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
@@ -107,10 +132,10 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 				evt.motion.xrel / float(window_size.y),
 				-evt.motion.yrel / float(window_size.y)
 			);
-			camera->transform->rotation = glm::normalize(
-				camera->transform->rotation
-				* glm::angleAxis(-motion.x * camera->fovy, glm::vec3(0.0f, 1.0f, 0.0f))
-				* glm::angleAxis(motion.y * camera->fovy, glm::vec3(1.0f, 0.0f, 0.0f))
+			camera.transform->rotation = glm::normalize(
+				camera.transform->rotation
+				* glm::angleAxis(-motion.x * camera.fovy, glm::vec3(0.0f, 1.0f, 0.0f))
+				* glm::angleAxis(motion.y * camera.fovy, glm::vec3(1.0f, 0.0f, 0.0f))
 			);
 			return true;
 		}
@@ -121,94 +146,89 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 
 void PlayMode::update(float elapsed) {
 
-	//slowly rotates through [0,1):
-	wobble += elapsed / 10.0f;
-	wobble -= std::floor(wobble);
-
-	hip->rotation = hip_base_rotation * glm::angleAxis(
-		glm::radians(5.0f * std::sin(wobble * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 1.0f, 0.0f)
-	);
-	upper_leg->rotation = upper_leg_base_rotation * glm::angleAxis(
-		glm::radians(7.0f * std::sin(wobble * 2.0f * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 0.0f, 1.0f)
-	);
-	lower_leg->rotation = lower_leg_base_rotation * glm::angleAxis(
-		glm::radians(10.0f * std::sin(wobble * 3.0f * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 0.0f, 1.0f)
-	);
-
-	//move camera:
+	// gameplay
+	switch (game_state)
 	{
+		case GameState::PrePlay:
+			{
+				if (space.ups) { game_state = GameState::Playing; }
+			}
+			break;
+			
+		case GameState::Playing:
+			{
+				{	//move camera:
+					//combine inputs into a move:
+					constexpr float PlayerSpeed = 30.0f;
+					glm::vec2 move = glm::vec2(0.0f);
+					if (left.pressed && !right.pressed) move.x =-1.0f;
+					if (!left.pressed && right.pressed) move.x = 1.0f;
+					if (down.pressed && !up.pressed) move.y =-1.0f;
+					if (!down.pressed && up.pressed) move.y = 1.0f;
 
-		//combine inputs into a move:
-		constexpr float PlayerSpeed = 30.0f;
-		glm::vec2 move = glm::vec2(0.0f);
-		if (left.pressed && !right.pressed) move.x =-1.0f;
-		if (!left.pressed && right.pressed) move.x = 1.0f;
-		if (down.pressed && !up.pressed) move.y =-1.0f;
-		if (!down.pressed && up.pressed) move.y = 1.0f;
+					//make it so that moving diagonally doesn't go faster:
+					if (move != glm::vec2(0.0f)) move = glm::normalize(move) * PlayerSpeed * elapsed;
 
-		//make it so that moving diagonally doesn't go faster:
-		if (move != glm::vec2(0.0f)) move = glm::normalize(move) * PlayerSpeed * elapsed;
+					glm::mat4x3 frame = camera.transform->make_parent_from_local();
+					glm::vec3 frame_right = frame[0];
+					//glm::vec3 up = frame[1];
+					glm::vec3 frame_forward = -frame[2];
 
-		glm::mat4x3 frame = camera->transform->make_parent_from_local();
-		glm::vec3 frame_right = frame[0];
-		//glm::vec3 up = frame[1];
-		glm::vec3 frame_forward = -frame[2];
+					camera.transform->position += move.x * frame_right + move.y * frame_forward;
+				}
+			}
+			break;
 
-		camera->transform->position += move.x * frame_right + move.y * frame_forward;
+		case GameState::PostPlay:
+			{
+
+			}
+			break;
+
+	}	// end of switch
+
+	{	// reset inputs
+		left.downs = 0;		left.ups = 0;
+		right.downs = 0; 	right.ups = 0;
+		up.downs = 0; 		up.ups = 0;
+		down.downs = 0;		down.ups = 0;
+		space.downs = 0; 	space.ups = 0;
 	}
 
-	//reset button press counters:
-	left.downs = 0;
-	right.downs = 0;
-	up.downs = 0;
-	down.downs = 0;
-}
+}	// end of update
 
 void PlayMode::draw(glm::uvec2 const &drawable_size) {
-	//update camera aspect ratio for drawable:
-	camera->aspect = float(drawable_size.x) / float(drawable_size.y);
 
-	//set up light type and position for lit_color_texture_program:
-	// TODO: consider using the Light(s) in the scene to do this
-	glUseProgram(lit_color_texture_program->program);
-	glUniform1i(lit_color_texture_program->LIGHT_TYPE_int, 1);
-	glUniform3fv(lit_color_texture_program->LIGHT_DIRECTION_vec3, 1, glm::value_ptr(glm::vec3(0.0f, 0.0f,-1.0f)));
-	glUniform3fv(lit_color_texture_program->LIGHT_ENERGY_vec3, 1, glm::value_ptr(glm::vec3(1.0f, 1.0f, 0.95f)));
-	glUseProgram(0);
-
-	glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
-	glClearDepth(1.0f); //1.0 is actually the default value to clear the depth buffer to, but FYI you can change it.
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-	glEnable(GL_DEPTH_TEST);
-	glDepthFunc(GL_LESS); //this is the default depth comparison function, but FYI you can change it.
-
-	GL_ERRORS(); //print any errors produced by this setup code
-
-	scene.draw(*camera);
-
-	{ //use DrawLines to overlay some text:
-		glDisable(GL_DEPTH_TEST);
-		float aspect = float(drawable_size.x) / float(drawable_size.y);
-		DrawLines lines(glm::mat4(
-			1.0f / aspect, 0.0f, 0.0f, 0.0f,
-			0.0f, 1.0f, 0.0f, 0.0f,
-			0.0f, 0.0f, 1.0f, 0.0f,
-			0.0f, 0.0f, 0.0f, 1.0f
-		));
-
-		constexpr float H = 0.09f;
-		lines.draw_text("Mouse motion rotates camera; WASD moves; escape ungrabs mouse",
-			glm::vec3(-aspect + 0.1f * H, -1.0 + 0.1f * H, 0.0),
-			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
-			glm::u8vec4(0x00, 0x00, 0x00, 0x00));
-		float ofs = 2.0f / drawable_size.y;
-		lines.draw_text("Mouse motion rotates camera; WASD moves; escape ungrabs mouse",
-			glm::vec3(-aspect + 0.1f * H + ofs, -1.0 + 0.1f * H + ofs, 0.0),
-			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
-			glm::u8vec4(0xff, 0xff, 0xff, 0x00));
+	{	// clear the background to grey
+		glClearColor(0.1f, 0.1f, 0.1f, 1.0f);	
+		glClearDepth(1.0f); //1.0 is actually the default value to clear the depth buffer to, but FYI you can change it.
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	}
-}
+
+	switch (game_state)
+	{
+		case GameState::PrePlay:
+			{
+				
+			}
+
+			break;
+
+		case GameState::Playing:
+		case GameState::PostPlay:
+			{
+				//update camera aspect ratio for drawable:
+				camera.aspect = float(drawable_size.x) / float(drawable_size.y);
+
+				glEnable(GL_DEPTH_TEST);
+				glDepthFunc(GL_LESS); //this is the default depth comparison function, but FYI you can change it.
+
+				GL_ERRORS(); //print any errors produced by this setup code
+
+				scene.draw(camera);
+			}
+			break;
+
+	}	// end of switch
+
+}	// end of draw

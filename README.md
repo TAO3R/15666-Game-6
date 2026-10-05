@@ -12,6 +12,8 @@ How To Play:
 
 (TODO: describe the controls and (if needed) goals/strategy.)
 
+Sources: https://fonts.google.com/selection?lang=en_Latn&preview.script=Latn&preview.lang=en_Latn
+
 ## Extra Credit
 
 Are your Physics Deterministic? If so, how can we verify this?

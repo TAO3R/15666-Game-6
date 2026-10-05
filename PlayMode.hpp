@@ -21,22 +21,24 @@ struct PlayMode : Mode {
 	//input tracking:
 	struct Button {
 		uint8_t downs = 0;
+		uint8_t ups = 0;
 		uint8_t pressed = 0;
-	} left, right, down, up;
+	} left, right, down, up, space;
 
 	//local copy of the game scene (so code can change it during gameplay):
 	Scene scene;
-
-	//hexapod leg to wobble:
-	Scene::Transform *hip = nullptr;
-	Scene::Transform *upper_leg = nullptr;
-	Scene::Transform *lower_leg = nullptr;
-	glm::quat hip_base_rotation;
-	glm::quat upper_leg_base_rotation;
-	glm::quat lower_leg_base_rotation;
-	float wobble = 0.0f;
 	
 	//camera:
-	Scene::Camera *camera = nullptr;
+	Scene::Transform camera_transform;
+	Scene::Camera camera{&camera_transform};
+
+	// state enum
+	enum class GameState : uint8_t
+	{
+		PrePlay = 0,
+		Playing = 1,
+		PostPlay = 2,
+		Count = 3
+	}	game_state = GameState::PrePlay;
 
 };

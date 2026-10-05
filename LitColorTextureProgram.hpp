@@ -4,37 +4,24 @@
 #include "Load.hpp"
 #include "Scene.hpp"
 
-//Shader program that draws transformed, lit, textured vertices tinted with vertex colors:
+// flat COLOR albedo with a fixed light so the faces are distinguishable
 struct LitColorTextureProgram {
 	LitColorTextureProgram();
 	~LitColorTextureProgram();
 
 	GLuint program = 0;
 
-	//Attribute (per-vertex variable) locations:
+	// attribute locations
 	GLuint Position_vec4 = -1U;
 	GLuint Normal_vec3 = -1U;
-	GLuint Color_vec4 = -1U;
-	GLuint TexCoord_vec2 = -1U;
 
-	//Uniform (per-invocation variable) locations:
+	// uniform locations
 	GLuint CLIP_FROM_OBJECT_mat4 = -1U;
-	GLuint LIGHT_FROM_OBJECT_mat4x3 = -1U;
 	GLuint LIGHT_FROM_NORMAL_mat3 = -1U;
-
-	//lighting:
-	GLuint LIGHT_TYPE_int = -1U;
-	GLuint LIGHT_LOCATION_vec3 = -1U;
-	GLuint LIGHT_DIRECTION_vec3 = -1U;
-	GLuint LIGHT_ENERGY_vec3 = -1U;
-	GLuint LIGHT_CUTOFF_float = -1U;
-	
-	//Textures:
-	//TEXTURE0 - texture that is accessed by TexCoord
+	GLuint COLOR_vec3 = -1U;	// albedo, linear rgb; set per drawable through pipeline.set_uniforms
 };
 
 extern Load< LitColorTextureProgram > lit_color_texture_program;
 
-//For convenient scene-graph setup, copy this object:
-// NOTE: by default, has texture bound to 1-pixel white texture -- so it's okay to use with vertex-color-only meshes.
+// pipeline template, copy this into a drawable then fill vao/type/start/count
 extern Scene::Drawable::Pipeline lit_color_texture_program_pipeline;
