@@ -41,4 +41,12 @@ struct PlayMode : Mode {
 		Count = 3
 	}	game_state = GameState::PrePlay;
 
+	// level
+	uint8_t length, width;
+
+	// physics
+
+
+	// balls
+
 };

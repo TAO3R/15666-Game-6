@@ -18,9 +18,21 @@ static glm::vec3 srgb(uint32_t hex)
 {
 	return glm::convertSRGBToLinear(glm::vec3((hex >> 16) & 0xff, (hex >> 8) & 0xff, hex & 0xff) / 255.0f);
 }
+static glm::vec3 const FloorColorA = srgb(0xadd8e6);	// light blue
+static glm::vec3 const FloorColorB = srgb(0xd6ecf3);	// lighter blue
+static glm::vec3 const WallColor = srgb(0xffffff);	// perimeter and common obstacles
 
-GLuint cube_sphere_vao = 0;
-Load< MeshBuffer > cube_sphere_meshes(LoadTagDefault, []() -> MeshBuffer const * {
+static constexpr float camera_height = 15.0f;
+static constexpr float CellSize = 2.0f;	// cube_sphere.pnct is 2m on a side for cube, 1m as radius for sphere, one cube/sphere per cell
+// center of cell (x, y) in world space, grid starts at the origin
+static glm::vec3 cell_center(int32_t x, int32_t y, float z)
+{
+	return glm::vec3(CellSize * float(x), CellSize * float(y), z);
+}
+
+// cube & sphere mesh
+static GLuint cube_sphere_vao = 0;
+static Load< MeshBuffer > cube_sphere_meshes(LoadTagDefault, []() -> MeshBuffer const * {
 	MeshBuffer const *ret = new MeshBuffer(data_path("cube_sphere.pnct"));
 	cube_sphere_vao = ret->make_vao_for_program(lit_color_texture_program->program);
 	return ret;
@@ -34,16 +46,42 @@ PlayMode::PlayMode() : scene() {
 	}
 
 	{	// camera set up
-		static constexpr float camera_height = 15.0f;
 		camera_transform.name = "Camera";
 		float pitch = glm::radians(0.0f);
 		camera_transform.position = glm::vec3(0.0f, 0.0f, camera_height);
 		camera_transform.rotation = glm::angleAxis(pitch, glm::vec3(1.0f, 0.0f, 0.0f));
 	}
 	
-	{	// create the level with cubes
+	{	// create the level with meshes
+
+		// copy a 'mesh' to 'position' with a flat color
+		auto add_cube = [&](std::string const &name, glm::vec3 const &position, glm::vec3 const &scale, glm::vec3 const &color, Mesh &mesh) -> Scene::Drawable &
+		{
+			scene.transforms.emplace_back();
+			Scene::Transform *transform = &scene.transforms.back();
+			transform->name = name;
+			transform->position = position;
+			transform->scale = scale;
+
+			scene.drawables.emplace_back(transform);
+			Scene::Drawable &drawable = scene.drawables.back();
+			drawable.pipeline = lit_color_texture_program_pipeline;
+			drawable.pipeline.vao = cube_sphere_vao;
+			drawable.pipeline.type = mesh.type;
+			drawable.pipeline.start = mesh.start;
+			drawable.pipeline.count = mesh.count;
+			drawable.pipeline.set_uniforms = [color]()
+			{
+				glUniform3fv(lit_color_texture_program->COLOR_vec3, 1, glm::value_ptr(color));
+			};
+			return drawable;
+		};
+
 		Mesh const &cube_mesh = cube_sphere_meshes->lookup("Cube");
-		// Mesh const &sphere_mesh = cube_sphere_meshes->lookup("Sphere");
+		Mesh const &sphere_mesh = cube_sphere_meshes->lookup("Sphere");
+
+		glm::vec3 const full_scale(1.0f);
+		glm::vec3 const half_scale(0.5f);
 
 		// add a transform
 		scene.transforms.emplace_back();
@@ -66,6 +104,7 @@ PlayMode::PlayMode() : scene() {
 		{
 			glUniform3fv(lit_color_texture_program->COLOR_vec3, 1, glm::value_ptr(color));
 		};
+
 	}
 }
 
