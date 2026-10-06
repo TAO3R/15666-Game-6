@@ -113,7 +113,7 @@ void step(World &world, std::vector< Shot > const &shots)
 			if (shot.tick != world.tick || shot.ball >= balls.size()) { continue; }
 			Ball &ball = balls[shot.ball];
 			if (ball.pocketed) { continue; }
-			ball.velocity += shot.impulse / ball.mass;
+			ball.velocity = shot.impulse / ball.mass;	// struck from rest: the shot replaces whatever motion the ball had
 		}
 	}
 
@@ -264,7 +264,7 @@ uint64_t hash(World const &world)
 	return h;
 }
 
-World make_break_world()
+World make_level_world()
 {
 	World world;
 
@@ -274,15 +274,15 @@ World make_break_world()
 		world.balls.push_back(cue);
 	}
 
-	{	// rack, apex toward the cue ball, a small gap so no two balls start in contact
-		float const spacing = 2.0f * ball_radius + 0.01f;
-		glm::vec2 const apex = glm::vec2(0.25f * float(table_length), 0.0f);
-		for (int32_t row = 0; row < 4; row++)
+	{	// 2 x 3 rectangle of red balls on the right half, centers 4 apart so there's a ball-sized gap between neighbors
+		float const spacing = 4.0f * ball_radius;
+		glm::vec2 const corner = glm::vec2(6.0f, -2.0f);	// lower-left ball
+		for (int32_t row = 0; row < 2; row++)
 		{
-			for (int32_t k = 0; k <= row; k++)
+			for (int32_t col = 0; col < 3; col++)
 			{
 				Ball ball;
-				ball.position = apex + glm::vec2(float(row) * spacing * 0.8660254f, (float(k) - 0.5f * float(row)) * spacing);
+				ball.position = corner + spacing * glm::vec2(float(col), float(row));
 				world.balls.push_back(ball);
 			}
 		}

@@ -45,7 +45,7 @@ struct Ball
 	bool pocketed = false;	// out of the simulation once true
 };
 
-// a cue strike: at the start of 'tick', ball 'ball' gets 'impulse' (velocity += impulse / mass)
+// a cue strike: at the start of 'tick', ball 'ball' is struck from rest (velocity = impulse / mass)
 struct Shot
 {
 	uint32_t tick = 0;
@@ -65,5 +65,5 @@ void step(World &world, std::vector< Shot > const &shots);
 // FNV-1a over the simulation state, equal hashes == bitwise equal states
 uint64_t hash(World const &world);
 
-// cue ball (index 0) on the left quarter, 10 balls racked as a triangle on the right quarter
-World make_break_world();
+// cue ball (index 0) on the left quarter, 6 red balls in a spaced out 2 x 3 rectangle on the right half
+World make_level_world();

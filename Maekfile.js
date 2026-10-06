@@ -31,6 +31,8 @@ if (maek.OS === "windows") {
 		`/I${NEST_LIBS}/SDL3/include`,
 		`/I${NEST_LIBS}/glm/include`,
 		`/I${NEST_LIBS}/libpng/include`,
+		`/I${NEST_LIBS}/harfbuzz/include`,
+		`/I${NEST_LIBS}/freetype/include`,
 		//#disable a few warnings:
 		`/wd4146`, //-1U is still unsigned
 		`/wd4297`, //unforunately SDLmain is nothrow
@@ -42,6 +44,8 @@ if (maek.OS === "windows") {
 		`/LIBPATH:${NEST_LIBS}/SDL3/lib`, `SDL3.lib`, `OpenGL32.lib`, `Shell32.lib`,
 		`/LIBPATH:${NEST_LIBS}/libpng/lib`, `libpng.lib`,
 		`/LIBPATH:${NEST_LIBS}/zlib/lib`, `zlib.lib`,
+		`/LIBPATH:${NEST_LIBS}/harfbuzz/lib`, `harfbuzz.lib`,
+		`/LIBPATH:${NEST_LIBS}/freetype/lib`, `freetype.lib`,
 		`/MANIFEST:EMBED`, `/MANIFESTINPUT:set-utf8-code-page.manifest`
 	);
 } else if (maek.OS === "linux") {
@@ -50,13 +54,17 @@ if (maek.OS === "windows") {
 		//include paths for nest libraries:
 		`-I${NEST_LIBS}/SDL3/include`, `-D_THREAD_SAFE`,
 		`-I${NEST_LIBS}/glm/include`,
-		`-I${NEST_LIBS}/libpng/include`
+		`-I${NEST_LIBS}/libpng/include`,
+		`-I${NEST_LIBS}/harfbuzz/include`,
+		`-I${NEST_LIBS}/freetype/include`
 	);
 	maek.options.LINKLibs.push(
 		//linker flags for nest libraries:
 		`-L${NEST_LIBS}/SDL3/lib`, `-lSDL3`, `-lm`, `-lpthread`, `-lGL`,
 		`-L${NEST_LIBS}/libpng/lib`, `-lpng`,
-		`-L${NEST_LIBS}/zlib/lib`, `-lz`
+		`-L${NEST_LIBS}/zlib/lib`, `-lz`,
+		`-L${NEST_LIBS}/harfbuzz/lib`, `-lharfbuzz`,
+		`-L${NEST_LIBS}/freetype/lib`, `-lfreetype`
 	);
 } else if (maek.OS === "macos") {
 	maek.options.CPPFlags.push(
@@ -64,7 +72,9 @@ if (maek.OS === "windows") {
 		//include paths for nest libraries:
 		`-I${NEST_LIBS}/SDL3/include`, `-D_THREAD_SAFE`,
 		`-I${NEST_LIBS}/glm/include`,
-		`-I${NEST_LIBS}/libpng/include`
+		`-I${NEST_LIBS}/libpng/include`,
+		`-I${NEST_LIBS}/harfbuzz/include`,
+		`-I${NEST_LIBS}/freetype/include`
 	);
 	maek.options.LINKLibs.push(
 		//linker flags for nest libraries:
@@ -88,7 +98,9 @@ if (maek.OS === "windows") {
 		`-lpthread`,
 		`-lm`,
 		`-L${NEST_LIBS}/libpng/lib`, `-lpng`,
-		`-L${NEST_LIBS}/zlib/lib`, `-lz`
+		`-L${NEST_LIBS}/zlib/lib`, `-lz`,
+		`-L${NEST_LIBS}/harfbuzz/lib`, `-lharfbuzz`,
+		`-L${NEST_LIBS}/freetype/lib`, `-lfreetype`
 	);
 }
 //use COPY to copy a file
@@ -98,7 +110,9 @@ if (maek.OS === "windows") {
 let copies = [
 	maek.COPY(`${NEST_LIBS}/SDL3/dist/README-SDL.txt`, `dist/README-SDL.txt`),
 	maek.COPY(`${NEST_LIBS}/libpng/dist/README-libpng.txt`, `dist/README-libpng.txt`),
-	maek.COPY(`${NEST_LIBS}/glm/dist/README-glm.txt`, `dist/README-glm.txt`)
+	maek.COPY(`${NEST_LIBS}/glm/dist/README-glm.txt`, `dist/README-glm.txt`),
+	maek.COPY(`${NEST_LIBS}/harfbuzz/dist/README-harfbuzz.txt`, `dist/README-harfbuzz.txt`),
+	maek.COPY(`${NEST_LIBS}/freetype/dist/README-freetype.txt`, `dist/README-freetype.txt`)
 ];
 if (maek.OS === 'windows') {
 	copies.push( maek.COPY(`${NEST_LIBS}/SDL3/dist/SDL3.dll`, `dist/SDL3.dll`) );
@@ -118,8 +132,9 @@ const game_names = [
 	maek.CPP('Physics.cpp'),
 	maek.CPP('PlayMode.cpp'),
 	maek.CPP('main.cpp'),
-	maek.CPP('LitColorTextureProgram.cpp')
-	//, maek.CPP('ColorTextureProgram.cpp')  //not used right now, but you might want it
+	maek.CPP('LitColorTextureProgram.cpp'),
+	maek.CPP('ColorTextureProgram.cpp'),
+	maek.CPP('Text.cpp')
 ];
 
 const common_names = [

@@ -2,6 +2,8 @@
 
 #include "Scene.hpp"
 #include "Physics.hpp"
+#include "Text.hpp"
+#include "data_path.hpp"
 
 #include <glm/glm.hpp>
 
@@ -56,7 +58,13 @@ struct PlayMode : Mode {
 	World previous_world;
 	std::vector< Shot > shots;	// every cue strike so far, replayed by tick
 	float accumulator = 0.0f;	// unsimulated time, always < physics_dt after update
-	void reset_world();	// back to the break layout, clears shots
+	void reset_world();	// back to the level layout: clears shots, refills shots_left, unpauses, clears failed
+
+	// rules: pocket every red ball before the cue ball comes to rest, with at most max_shots strikes
+	static constexpr uint32_t max_shots = 5;
+	uint32_t shots_left = max_shots;	// one per strike that actually leaves the cue
+	bool paused = false;	// space toggles; a strike while paused resumes time
+	bool failed = false;	// cue ball stopped: table frozen on "Press Space to Try Again", only space resets
 
 	// balls, index matches world.balls (0 is the cue ball)
 	std::vector< Scene::Transform * > ball_transforms;
@@ -68,5 +76,13 @@ struct PlayMode : Mode {
 	glm::vec2 aim_point = glm::vec2(0.0f);	// cursor on the ball-center plane (z = ball_radius)
 	glm::vec2 cursor_to_table(glm::vec2 cursor, glm::uvec2 const &window_size) const;
 	glm::vec2 aim_impulse() const;	// impulse a release would give the cue ball, zero inside the dead zone (cursor on the ball)
+	bool can_shoot() const	// playing, shots left, not failed, cue ball still on the table
+	{
+		return game_state == GameState::Playing && shots_left > 0 && !failed && !world.balls[0].pocketed;
+	}
+
+	// text
+	TextRenderer hud{data_path("OriginalSurfer-Regular.ttf"), 36};
+	TextRenderer title{data_path("OriginalSurfer-Regular.ttf"), 96};
 
 };

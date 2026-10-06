@@ -152,7 +152,7 @@ PlayMode::PlayMode() : scene() {
 
 		{	// balls, positions are synced from the physics world every frame in update()
 			Mesh const &sphere_mesh = cube_sphere_meshes->lookup("Sphere");
-			world = make_break_world();
+			world = make_level_world();
 			previous_world = world;
 			for (uint32_t i = 0; i < world.balls.size(); i++)
 			{
@@ -166,11 +166,14 @@ PlayMode::PlayMode() : scene() {
 
 void PlayMode::reset_world()
 {
-	world = make_break_world();
+	world = make_level_world();
 	previous_world = world;
 	shots.clear();
 	accumulator = 0.0f;
 	aiming = false;
+	shots_left = max_shots;
+	paused = false;
+	failed = false;
 }
 
 glm::vec2 PlayMode::cursor_to_table(glm::vec2 cursor, glm::uvec2 const &window_size) const
@@ -237,7 +240,9 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 			descend.pressed = true;
 			return true;
 		} else if (evt.key.key == SDLK_R) {
+			if (failed) { return true; }	// after a fail only space restarts
 			reset_world();
+			if (game_state == GameState::PostPlay) { game_state = GameState::Playing; }
 			return true;
 		} else if (evt.key.key == SDLK_TAB) {
 			if (camera_mode == CameraMode::Shot)
@@ -295,8 +300,8 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 				return true;
 			}
 		}
-		else if (evt.button.button == SDL_BUTTON_LEFT && !world.balls[0].pocketed)
-		{	// start a slingshot drag
+		else if (evt.button.button == SDL_BUTTON_LEFT && can_shoot())
+		{	// start a slingshot drag (allowed while paused)
 			aiming = true;
 			aim_point = cursor_to_table(glm::vec2(evt.button.x, evt.button.y), window_size);
 			return true;
@@ -306,7 +311,12 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 		{	// release: shoot on the next physics tick, unless released on the ball
 			aim_point = cursor_to_table(glm::vec2(evt.button.x, evt.button.y), window_size);
 			glm::vec2 impulse = aim_impulse();
-			if (impulse != glm::vec2(0.0f)) { shots.push_back(Shot{ world.tick, 0, impulse }); }
+			if (impulse != glm::vec2(0.0f) && can_shoot())
+			{
+				shots.push_back(Shot{ world.tick, 0, impulse });
+				shots_left--;
+				paused = false;	// striking during time stop resumes time
+			}
 			aiming = false;
 			return true;
 		}
@@ -371,6 +381,15 @@ void PlayMode::update(float elapsed) {
 					camera.transform->position += move.x * frame_right + move.y * frame_forward + glm::vec3(0.0f, 0.0f, move.z);
 				}
 
+				if (failed)
+				{	// table frozen on "Press Space to Try Again", space is the only way back to the level layout
+					if (space.downs) { reset_world(); }
+				}
+				else if (space.downs)
+				{	// time stop
+					paused = !paused;
+				}
+				else if (!paused)
 				{	// physics at a fixed step, as many ticks as the elapsed time covers
 					accumulator += elapsed;
 					while (accumulator >= physics_dt)
@@ -378,6 +397,26 @@ void PlayMode::update(float elapsed) {
 						previous_world = world;
 						step(world, shots);
 						accumulator -= physics_dt;
+
+						// win: every red ball is down (checked first, so a last-moment pocket still counts)
+						bool cleared = std::all_of(world.balls.begin() + 1, world.balls.end(), [](Ball const &ball) { return ball.pocketed; });
+						if (cleared)
+						{
+							game_state = GameState::PostPlay;
+							accumulator = 0.0f;
+							break;
+						}
+
+						// lose: once the cue ball has been struck, it coming to rest or falling in ends the attempt
+						Ball const &cue = world.balls[0];
+						bool struck = shots_left < max_shots;
+						if (struck && (cue.pocketed || cue.velocity == glm::vec2(0.0f)))
+						{
+							failed = true;
+							aiming = false;
+							accumulator = 0.0f;
+							break;
+						}
 					}
 				}
 
@@ -396,8 +435,12 @@ void PlayMode::update(float elapsed) {
 			break;
 
 		case GameState::PostPlay:
-			{
-
+			{	// table stays frozen on the winning frame until space
+				if (space.downs)
+				{
+					reset_world();
+					game_state = GameState::Playing;
+				}
 			}
 			break;
 
@@ -423,11 +466,22 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	}
 
+	// horizontally center one line on its measured width
+	auto centered = [&drawable_size](TextRenderer &font, std::string const &text, float baseline_y, glm::u8vec4 const &color)
+	{
+		float x = 0.5f * (float(drawable_size.x) - font.measure(text));
+		font.draw(text, drawable_size, glm::vec2(x, baseline_y), color);
+	};
+	float const title_baseline = 0.5f * float(drawable_size.y) - 0.5f * (title.ascender() - title.descender());	// roughly center the caps on the screen
+	glm::u8vec4 const light_text = glm::u8vec4(0xff, 0xff, 0xff, 0xff);	// on the dark background
+	glm::u8vec4 const dark_text = glm::u8vec4(0x00, 0x00, 0x00, 0xff);	// on the light felt; vertex color is linear, anything above 0 gets brightened by the sRGB framebuffer
+
 	switch (game_state)
 	{
 		case GameState::PrePlay:
 			{
-				
+				centered(title, "\"One Shot\" Clearance", title_baseline, light_text);
+				centered(hud, "Press Space to start", title_baseline - title.descender() - hud.ascender(), light_text);
 			}
 
 			break;
@@ -456,6 +510,23 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 						uint8_t fade = uint8_t(255.0f * (1.0f - power));
 						DrawLines lines(camera.make_projection() * glm::mat4(camera.transform->make_local_from_world()));
 						lines.draw(glm::vec3(cue, ball_radius), glm::vec3(end, ball_radius), glm::u8vec4(0xff, fade, fade, 0xff));
+					}
+				}
+
+				{	// hud, drawn over the scene
+					glDisable(GL_DEPTH_TEST);
+
+					float const margin = 0.5f * hud.line_height();
+					std::string status = "Shots: " + std::to_string(shots_left);
+					if (paused) { status += "  PAUSED"; }
+					hud.draw(status, drawable_size, glm::vec2(margin, margin + hud.descender()), light_text);
+
+					if (failed) { centered(title, "Press Space to Try Again", title_baseline, dark_text); }
+
+					if (game_state == GameState::PostPlay)
+					{
+						centered(title, "Clear!", title_baseline, dark_text);
+						centered(hud, "Space to play again", title_baseline - title.descender() - hud.ascender(), dark_text);
 					}
 				}
 			}
