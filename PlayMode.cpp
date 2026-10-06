@@ -32,8 +32,8 @@ static constexpr float camera_height = 22.0f;	// sees ~25m vertically, fits the 
 static glm::vec3 cell_center(int32_t x, int32_t y, float z)
 {
 	return glm::vec3(
-		float(x) - 0.5f * float(PlayMode::table_length) + 0.5f,
-		float(y) - 0.5f * float(PlayMode::table_width) + 0.5f,
+		float(x) - 0.5f * float(table_length) + 0.5f,
+		float(y) - 0.5f * float(table_width) + 0.5f,
 		z
 	);
 }
@@ -94,16 +94,6 @@ PlayMode::PlayMode() : scene() {
 
 		int32_t const l = table_length;
 		int32_t const w = table_width;
-
-		// interior cell (x, y) is part of a pocket hole
-		auto in_pocket = [&](int32_t x, int32_t y) -> bool
-		{
-			for (glm::ivec2 const &p : pocket_cells)
-			{
-				if (x >= p.x && x < p.x + pocket_size && y >= p.y && y < p.y + pocket_size) { return true; }
-			}
-			return false;
-		};
 
 		{	// felt, top at z = 0, checkerboard, no cube over the pocket holes
 			for (int32_t y = 0; y < w; y++)

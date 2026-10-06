@@ -1,12 +1,12 @@
 #include "Mode.hpp"
 
 #include "Scene.hpp"
+#include "Physics.hpp"
 
 #include <glm/glm.hpp>
 
 #include <vector>
 #include <deque>
-#include <array>
 
 struct PlayMode : Mode {
 	PlayMode();
@@ -46,25 +46,6 @@ struct PlayMode : Mode {
 		Count = 3
 	}	game_state = GameState::PrePlay;
 
-	// level, table centered on the origin with the long side along x, one 1x1 cell per cube
-	// single source of truth for both the scene layout and the table collider
-	static constexpr int32_t table_length = 40;	// interior cells along x
-	static constexpr int32_t table_width = 20;	// interior cells along y
-	static constexpr int32_t pocket_size = 4;	// each pocket is a pocket_size x pocket_size hole in the felt
-	static constexpr int32_t pocket_depth = 2;	// net layers below the felt top (z = 0)
-	static constexpr float cushion_height = 0.8f;	// lower than the ball center (z = 1) so the cue clears it
-	std::array< glm::ivec2, 6 > pocket_cells = {	// min corner cell of each pocket hole: 4 corners + 2 middles of the long sides
-		glm::ivec2(0, 0),
-		glm::ivec2((table_length - pocket_size) / 2, 0),
-		glm::ivec2(table_length - pocket_size, 0),
-		glm::ivec2(0, table_width - pocket_size),
-		glm::ivec2((table_length - pocket_size) / 2, table_width - pocket_size),
-		glm::ivec2(table_length - pocket_size, table_width - pocket_size)
-	};
-
-	// physics
-
-
-	// balls
+	// level: table constants (size, pockets, cushion height) live in Physics.hpp
 
 };
