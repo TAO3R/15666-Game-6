@@ -10,6 +10,7 @@
 
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/color_space.hpp>
+#include <glm/gtc/constants.hpp>
 
 #include <random>
 #include <algorithm>
@@ -24,6 +25,8 @@ static glm::vec3 const FloorColorB = srgb(0xd6ecf3);	// lighter blue
 static glm::vec3 const WallColor = srgb(0xffffff);	// perimeter and common obstacles
 
 static glm::vec3 const NetColor = srgb(0x404040);	// pocket nets, dark so the holes read as holes
+static glm::vec3 const CueBallColor = srgb(0xffffff);
+static glm::vec3 const BallColor = srgb(0xe03c3c);
 
 static constexpr float camera_height = 22.0f;	// sees ~25m vertically, fits the 22-cell-tall table with its cushions
 // cube_sphere.pnct: cube is 2m on a side and sphere has 1m radius, so a 0.5 scaled cube fills one 1x1 cell
@@ -53,14 +56,10 @@ PlayMode::PlayMode() : scene() {
 		scene.transforms.clear();
 	}
 
-	{	// camera set up
+	{	// camera set up, starts in the shot view: straight above the table, looking down its local -z
 		camera_transform.name = "Camera";
-		float pitch = glm::radians(0.0f);
 		camera_transform.position = glm::vec3(0.0f, 0.0f, camera_height);
-		camera_transform.rotation = glm::angleAxis(pitch, glm::vec3(1.0f, 0.0f, 0.0f));
-		// TODO(control): init from camera_yaw / camera_pitch instead, e.g. pitch = -90 deg to keep the current top-down start
-		//  rotation = angleAxis(yaw, world z) * angleAxis(pitch + 90 deg, local x)
-		//  (+90 because the camera looks down its local -z, so an unrotated camera faces straight down)
+		camera_transform.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);	// identity (wxyz)
 	}
 	
 	{	// create the level with meshes
@@ -150,7 +149,54 @@ PlayMode::PlayMode() : scene() {
 				}
 			}
 		}
+
+		{	// balls, positions are synced from the physics world every frame in update()
+			Mesh const &sphere_mesh = cube_sphere_meshes->lookup("Sphere");
+			world = make_break_world();
+			previous_world = world;
+			for (uint32_t i = 0; i < world.balls.size(); i++)
+			{
+				glm::vec3 position = glm::vec3(world.balls[i].position, ball_radius);
+				Scene::Drawable &drawable = add_cube("Ball", position, glm::vec3(ball_radius), i == 0 ? CueBallColor : BallColor, sphere_mesh);
+				ball_transforms.push_back(drawable.transform);
+			}
+		}
 	}
+}
+
+void PlayMode::reset_world()
+{
+	world = make_break_world();
+	previous_world = world;
+	shots.clear();
+	accumulator = 0.0f;
+	aiming = false;
+}
+
+glm::vec2 PlayMode::cursor_to_table(glm::vec2 cursor, glm::uvec2 const &window_size) const
+{
+	// cursor (layout pixels, y down) -> ndc, then un-project two depths into a world space ray
+	// ndc z = 1 is at infinity for infinitePerspective, so use -1 (near plane) and 0
+	glm::vec2 ndc = glm::vec2(2.0f * cursor.x / float(window_size.x) - 1.0f, 1.0f - 2.0f * cursor.y / float(window_size.y));
+	glm::mat4 world_from_clip = glm::inverse(camera.make_projection() * glm::mat4(camera.transform->make_local_from_world()));
+	glm::vec4 a = world_from_clip * glm::vec4(ndc, -1.0f, 1.0f);
+	glm::vec4 b = world_from_clip * glm::vec4(ndc, 0.0f, 1.0f);
+	glm::vec3 from = glm::vec3(a) / a.w;
+	glm::vec3 dir = glm::vec3(b) / b.w - from;
+
+	if (dir.z == 0.0f) { return aim_point; }	// ray parallel to the table, keep the last point
+	float t = (ball_radius - from.z) / dir.z;
+	return glm::vec2(from + t * dir);
+}
+
+glm::vec2 PlayMode::aim_impulse() const
+{
+	Ball const &cue = world.balls[0];
+	glm::vec2 drag = cue.position - aim_point;	// slingshot: the ball flies away from the cursor
+	float dist = glm::length(drag);
+	if (dist <= ball_radius) { return glm::vec2(0.0f); }	// releasing on the ball cancels the shot
+	float power = std::min(dist / max_drag, 1.0f);
+	return drag / dist * power * max_shot_speed * cue.mass;
 }
 
 PlayMode::~PlayMode() {
@@ -182,8 +228,35 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 			space.downs += 1;
 			space.pressed = true;
 			return true;
+		} else if (evt.key.key == SDLK_E) {
+			ascend.downs += 1;
+			ascend.pressed = true;
+			return true;
+		} else if (evt.key.key == SDLK_Q) {
+			descend.downs += 1;
+			descend.pressed = true;
+			return true;
+		} else if (evt.key.key == SDLK_R) {
+			reset_world();
+			return true;
+		} else if (evt.key.key == SDLK_TAB) {
+			if (camera_mode == CameraMode::Shot)
+			{	// free camera picks up from the shot view: yaw 0 / pitch -90 rebuilds to the same identity rotation
+				camera_mode = CameraMode::Free;
+				camera_yaw = 0.0f;
+				camera_pitch = glm::radians(-90.0f);
+				aiming = false;
+				SDL_SetWindowRelativeMouseMode(Mode::window, true);
+			}
+			else
+			{	// back to the fixed top-down view with a visible cursor
+				camera_mode = CameraMode::Shot;
+				camera_transform.position = glm::vec3(0.0f, 0.0f, camera_height);
+				camera_transform.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+				SDL_SetWindowRelativeMouseMode(Mode::window, false);
+			}
+			return true;
 		}
-		// TODO(control): SDLK_Q / SDLK_E -> descend / ascend downs + pressed, same pattern as WASD
 	} else if (evt.type == SDL_EVENT_KEY_UP) {
 		if (evt.key.key == SDLK_A) {
 			left.ups += 1;
@@ -205,28 +278,56 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 			space.ups += 1;
 			space.pressed = false;
 			return true;
+		} else if (evt.key.key == SDLK_E) {
+			ascend.ups += 1;
+			ascend.pressed = false;
+			return true;
+		} else if (evt.key.key == SDLK_Q) {
+			descend.ups += 1;
+			descend.pressed = false;
+			return true;
 		}
-		// TODO(control): SDLK_Q / SDLK_E -> descend / ascend ups + released
 	} else if (evt.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-		if (SDL_GetWindowRelativeMouseMode(Mode::window) == false) {
-			SDL_SetWindowRelativeMouseMode(Mode::window, true);
+		if (camera_mode == CameraMode::Free)
+		{
+			if (SDL_GetWindowRelativeMouseMode(Mode::window) == false) {
+				SDL_SetWindowRelativeMouseMode(Mode::window, true);
+				return true;
+			}
+		}
+		else if (evt.button.button == SDL_BUTTON_LEFT && !world.balls[0].pocketed)
+		{	// start a slingshot drag
+			aiming = true;
+			aim_point = cursor_to_table(glm::vec2(evt.button.x, evt.button.y), window_size);
+			return true;
+		}
+	} else if (evt.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+		if (camera_mode == CameraMode::Shot && evt.button.button == SDL_BUTTON_LEFT && aiming)
+		{	// release: shoot on the next physics tick, unless released on the ball
+			aim_point = cursor_to_table(glm::vec2(evt.button.x, evt.button.y), window_size);
+			glm::vec2 impulse = aim_impulse();
+			if (impulse != glm::vec2(0.0f)) { shots.push_back(Shot{ world.tick, 0, impulse }); }
+			aiming = false;
 			return true;
 		}
 	} else if (evt.type == SDL_EVENT_MOUSE_MOTION) {
+		if (camera_mode == CameraMode::Shot)
+		{
+			aim_point = cursor_to_table(glm::vec2(evt.motion.x, evt.motion.y), window_size);
+			return true;
+		}
 		if (SDL_GetWindowRelativeMouseMode(Mode::window) == true) {
 			glm::vec2 motion = glm::vec2(
 				evt.motion.xrel / float(window_size.y),
 				-evt.motion.yrel / float(window_size.y)
 			);
-			// TODO(control): first person look, replace the incremental rotation below (it accumulates roll)
-			//  camera_yaw -= motion.x * camera.fovy;	// unbounded yaw, wrap into [-pi, pi)
-			//  camera_pitch = clamp(camera_pitch + motion.y * camera.fovy, -90 deg, 90 deg);	// no flipping over the top
-			//  rotation = angleAxis(camera_yaw, world z) * angleAxis(camera_pitch + 90 deg, local x);	// no roll term at all
-			camera.transform->rotation = glm::normalize(
-				camera.transform->rotation
-				* glm::angleAxis(-motion.x * camera.fovy, glm::vec3(0.0f, 1.0f, 0.0f))
-				* glm::angleAxis(motion.y * camera.fovy, glm::vec3(1.0f, 0.0f, 0.0f))
-			);
+			// first person look: unbounded yaw, clamped pitch, no roll term at all
+			camera_yaw -= motion.x * camera.fovy;
+			camera_yaw -= glm::two_pi< float >() * std::floor((camera_yaw + glm::pi< float >()) / glm::two_pi< float >());	// wrap into [-pi, pi)
+			camera_pitch = std::clamp(camera_pitch + motion.y * camera.fovy, -glm::half_pi< float >(), glm::half_pi< float >());
+			// +90 deg because the camera looks down its local -z, so an unrotated camera faces straight down
+			camera.transform->rotation = glm::angleAxis(camera_yaw, glm::vec3(0.0f, 0.0f, 1.0f))
+				* glm::angleAxis(camera_pitch + glm::half_pi< float >(), glm::vec3(1.0f, 0.0f, 0.0f));
 			return true;
 		}
 	}
@@ -247,29 +348,49 @@ void PlayMode::update(float elapsed) {
 			
 		case GameState::Playing:
 			{
+				if (camera_mode == CameraMode::Free)
 				{	//move camera:
 					//combine inputs into a move:
 					constexpr float PlayerSpeed = 30.0f;
-					glm::vec2 move = glm::vec2(0.0f);
+					glm::vec3 move = glm::vec3(0.0f);
 					if (left.pressed && !right.pressed) move.x =-1.0f;
 					if (!left.pressed && right.pressed) move.x = 1.0f;
 					if (down.pressed && !up.pressed) move.y =-1.0f;
 					if (!down.pressed && up.pressed) move.y = 1.0f;
+					if (descend.pressed && !ascend.pressed) move.z =-1.0f;
+					if (!descend.pressed && ascend.pressed) move.z = 1.0f;
 
 					//make it so that moving diagonally doesn't go faster:
-					if (move != glm::vec2(0.0f)) move = glm::normalize(move) * PlayerSpeed * elapsed;
+					if (move != glm::vec3(0.0f)) move = glm::normalize(move) * PlayerSpeed * elapsed;
 
-					// TODO(control): WASD should move on the x-y plane only, independent of pitch
-					//  forward = (-sin(yaw), cos(yaw), 0), right = cross(forward, world z) = (cos(yaw), sin(yaw), 0)
-					//  (with the rotation formula above, yaw = 0 faces +y and local x stays world +x)
-					//  instead of the camera's own frame below, which flies toward wherever the camera points
-					// TODO(control): Q / E move along world z: position.z += (ascend - descend) * speed * elapsed
-					glm::mat4x3 frame = camera.transform->make_parent_from_local();
-					glm::vec3 frame_right = frame[0];
-					//glm::vec3 up = frame[1];
-					glm::vec3 frame_forward = -frame[2];
+					// WASD on the x-y plane from the yaw alone (pitch doesn't tilt the move), Q / E along world z
+					// yaw = 0 faces +y with local x on world +x, matching the rotation built in handle_event
+					glm::vec3 frame_forward = glm::vec3(-std::sin(camera_yaw), std::cos(camera_yaw), 0.0f);
+					glm::vec3 frame_right = glm::vec3(std::cos(camera_yaw), std::sin(camera_yaw), 0.0f);
 
-					camera.transform->position += move.x * frame_right + move.y * frame_forward;
+					camera.transform->position += move.x * frame_right + move.y * frame_forward + glm::vec3(0.0f, 0.0f, move.z);
+				}
+
+				{	// physics at a fixed step, as many ticks as the elapsed time covers
+					accumulator += elapsed;
+					while (accumulator >= physics_dt)
+					{
+						previous_world = world;
+						step(world, shots);
+						accumulator -= physics_dt;
+					}
+				}
+
+				{	// sync balls, interpolated between the last two ticks so motion stays smooth at any frame rate
+					float alpha = accumulator / physics_dt;
+					for (uint32_t i = 0; i < ball_transforms.size(); i++)
+					{
+						Ball const &ball = world.balls[i];
+						glm::vec2 position = glm::mix(previous_world.balls[i].position, ball.position, alpha);
+						ball_transforms[i]->position = glm::vec3(position, ball_radius);
+						ball_transforms[i]->scale = glm::vec3(ball.pocketed ? 0.0f : ball_radius);	// pocketed balls just vanish
+					}
+					if (world.balls[0].pocketed) { aiming = false; }	// cue ball gone: nothing to aim until R
 				}
 			}
 			break;
@@ -288,6 +409,8 @@ void PlayMode::update(float elapsed) {
 		up.downs = 0; 		up.ups = 0;
 		down.downs = 0;		down.ups = 0;
 		space.downs = 0; 	space.ups = 0;
+		ascend.downs = 0;	ascend.ups = 0;
+		descend.downs = 0;	descend.ups = 0;
 	}
 
 }	// end of update
@@ -321,6 +444,20 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 				GL_ERRORS(); //print any errors produced by this setup code
 
 				scene.draw(camera);
+
+				if (camera_mode == CameraMode::Shot && aiming)
+				{	// aim line in world space: from the cue ball along the shot, longer and redder with power
+					glm::vec2 impulse = aim_impulse();
+					if (impulse != glm::vec2(0.0f))
+					{
+						glm::vec2 cue = world.balls[0].position;
+						float power = glm::length(impulse) / (max_shot_speed * world.balls[0].mass);
+						glm::vec2 end = cue + impulse / glm::length(impulse) * power * max_drag;
+						uint8_t fade = uint8_t(255.0f * (1.0f - power));
+						DrawLines lines(camera.make_projection() * glm::mat4(camera.transform->make_local_from_world()));
+						lines.draw(glm::vec3(cue, ball_radius), glm::vec3(end, ball_radius), glm::u8vec4(0xff, fade, fade, 0xff));
+					}
+				}
 			}
 			break;
 
